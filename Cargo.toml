@@ -1,0 +1,13 @@
+[package]
+name = "actix-todo"
+version = "0.1.0"
+authors = ["Olivier Pinon <oliv.pinon@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+actix = "*"
+actix-web = "*"
+serde = "*"
+serde_json = "*"
+serde_derive = "*"
+futures = "*"

@@ -3,13 +3,13 @@ use actix_web::HttpResponse;
 
 use actix::prelude::*;
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize)]
 pub struct InsertTodo {
     done: bool,
     val: String,
 }
 
-#[derive(Serialize, Deserialize, PartialEq, Debug)]
+#[derive(Serialize, Deserialize, PartialEq)]
 pub struct Todo {
     id: u64,
     done: bool,

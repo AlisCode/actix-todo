@@ -1,14 +1,23 @@
 #[macro_use]
 extern crate serde_derive;
 
-use actix::prelude::*;
 use actix_web::{server, App, AsyncResponder, FutureResponse, HttpRequest, HttpResponse, Path};
 use futures::future::{self, Future};
+
+use actix::prelude::*;
 
 mod state;
 
 fn index(req: &HttpRequest<state::State>) -> FutureResponse<HttpResponse> {
     future::ok(HttpResponse::Ok().body("Hello world !")).responder()
+}
+
+fn route_read_all(req: &HttpRequest<state::State>) -> FutureResponse<HttpResponse> {
+    req.state()
+        .todo_store
+        .send(state::TodoMessage::ReadAll)
+        .and_then(|m| future::ok(m))
+        .responder()
 }
 
 fn main() {

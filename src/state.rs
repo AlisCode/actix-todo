@@ -1,6 +1,7 @@
-use actix::prelude::*;
 use actix::Addr;
 use actix_web::HttpResponse;
+
+use actix::prelude::*;
 
 #[derive(Serialize, Deserialize)]
 pub struct InsertTodo {
@@ -40,7 +41,7 @@ impl Default for TodoStore {
 }
 
 pub struct State {
-    todo_store: Addr<TodoStore>,
+    pub todo_store: Addr<TodoStore>,
 }
 
 impl State {
@@ -50,8 +51,14 @@ impl State {
 }
 
 impl TodoStore {
-    pub fn add_todo(&mut self, todo: Todo) {
-        self.todos.push(todo);
+    pub fn add_todo(&mut self, todo: InsertTodo) -> u64 {
+        let max = self.todos.iter().rev().next();
+        let id = match max {
+            Some(m) => m.id,
+            None => 1,
+        };
+        self.todos.push(Todo::from_insert_todo(todo, id));
+        id
     }
 
     pub fn remove_todo(&mut self, id: u64) -> bool {
@@ -99,29 +106,66 @@ impl TodoStore {
             _ => HttpResponse::InternalServerError().finish(),
         }
     }
+
+    fn handle_read(&self, id: u64) -> HttpResponse {
+        let todo = self.read_todo(id);
+        if todo.is_none() {
+            return HttpResponse::NotFound().finish();
+        }
+
+        let json = serde_json::to_string(todo.unwrap());
+
+        match json {
+            Ok(r) => HttpResponse::Ok().body(&r),
+            _ => HttpResponse::InternalServerError().finish(),
+        }
+    }
+
+    fn handle_add(&mut self, insert_todo: InsertTodo) -> HttpResponse {
+        let rep = self.add_todo(insert_todo);
+        HttpResponse::Ok().body(format!("{}", rep))
+    }
+
+    fn handle_delete(&mut self, id: u64) -> HttpResponse {
+        match self.remove_todo(id) {
+            true => HttpResponse::Ok().finish(),
+            false => HttpResponse::NotFound().finish(),
+        }
+    }
+
+    fn handle_update(&mut self, todo: Todo) -> HttpResponse {
+        match self.update_todo(todo) {
+            Some(t) => match serde_json::to_string(t) {
+                Ok(r) => HttpResponse::Ok().body(r),
+                _ => HttpResponse::InternalServerError().finish(),
+            },
+            _ => HttpResponse::BadRequest().finish(),
+        }
+    }
 }
 
 pub enum TodoMessage {
     Add(InsertTodo),
     Delete(u64),
-    Remove(u64),
     ReadAll,
     Read(u64),
     Update(Todo),
 }
 
 impl Message for TodoMessage {
-    type Result = String;
+    type Result = Result<HttpResponse, ()>;
 }
 
 impl Handler<TodoMessage> for TodoStore {
-    type Result = String;
+    type Result = Result<HttpResponse, ()>;
 
     fn handle(&mut self, msg: TodoMessage, _ctx: &mut Self::Context) -> Self::Result {
-        let _ = match msg {
-            TodoMessage::ReadAll => self.handle_read_all(),
-            _ => HttpResponse::NotFound().finish(),
-        };
-        "".into()
+        match msg {
+            TodoMessage::ReadAll => Ok(self.handle_read_all()),
+            TodoMessage::Read(id) => Ok(self.handle_read(id)),
+            TodoMessage::Add(todo) => Ok(self.handle_add(todo)),
+            TodoMessage::Delete(id) => Ok(self.handle_delete(id)),
+            TodoMessage::Update(todo) => Ok(self.handle_update(todo)),
+        }
     }
 }

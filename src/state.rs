@@ -3,13 +3,13 @@ use actix_web::HttpResponse;
 
 use actix::prelude::*;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct InsertTodo {
     done: bool,
     val: String,
 }
 
-#[derive(Serialize, Deserialize, PartialEq)]
+#[derive(Serialize, Deserialize, PartialEq, Debug)]
 pub struct Todo {
     id: u64,
     done: bool,
@@ -54,7 +54,7 @@ impl TodoStore {
     pub fn add_todo(&mut self, todo: InsertTodo) -> u64 {
         let max = self.todos.iter().rev().next();
         let id = match max {
-            Some(m) => m.id,
+            Some(m) => m.id + 1,
             None => 1,
         };
         self.todos.push(Todo::from_insert_todo(todo, id));
@@ -75,18 +75,18 @@ impl TodoStore {
         true
     }
 
-    pub fn update_todo(&mut self, todo: Todo) -> Option<&Todo> {
+    pub fn update_todo(&mut self, todo: InsertTodo, id: u64) -> Option<&Todo> {
         let ref_todo = self
             .todos
             .iter()
             .enumerate()
-            .filter_map(|t| if t.1.id == todo.id { Some(t.0) } else { None })
+            .filter_map(|t| if t.1.id == id { Some(t.0) } else { None })
             .next();
         if ref_todo.is_none() {
             return None;
         }
         let ref_todo = ref_todo.unwrap();
-        self.todos[ref_todo] = todo;
+        self.todos[ref_todo] = Todo::from_insert_todo(todo, id);
         Some(&self.todos[ref_todo])
     }
 
@@ -98,50 +98,43 @@ impl TodoStore {
         &self.todos
     }
 
-    fn handle_read_all(&self) -> HttpResponse {
+    fn handle_read_all(&self) -> TodoMessageResult {
         let todos = self.read_all();
-        let json = serde_json::to_string(todos);
-        match json {
-            Ok(r) => HttpResponse::Ok().body(r),
-            _ => HttpResponse::InternalServerError().finish(),
-        }
+        serde_json::to_string(todos).or_else(|_| Err(APIError::InternalServerError))
     }
 
-    fn handle_read(&self, id: u64) -> HttpResponse {
+    fn handle_read(&self, id: u64) -> TodoMessageResult {
         let todo = self.read_todo(id);
         if todo.is_none() {
-            return HttpResponse::NotFound().finish();
+            return Err(APIError::NotFound);
         }
-
-        let json = serde_json::to_string(todo.unwrap());
-
-        match json {
-            Ok(r) => HttpResponse::Ok().body(&r),
-            _ => HttpResponse::InternalServerError().finish(),
-        }
+        serde_json::to_string(todo.unwrap()).or_else(|_| Err(APIError::InternalServerError))
     }
 
-    fn handle_add(&mut self, insert_todo: InsertTodo) -> HttpResponse {
+    fn handle_add(&mut self, insert_todo: InsertTodo) -> TodoMessageResult {
         let rep = self.add_todo(insert_todo);
-        HttpResponse::Ok().body(format!("{}", rep))
+        self.handle_read(rep)
     }
 
-    fn handle_delete(&mut self, id: u64) -> HttpResponse {
+    fn handle_delete(&mut self, id: u64) -> TodoMessageResult {
         match self.remove_todo(id) {
-            true => HttpResponse::Ok().finish(),
-            false => HttpResponse::NotFound().finish(),
+            true => Ok("".into()),
+            false => Err(APIError::NotFound),
         }
     }
 
-    fn handle_update(&mut self, todo: Todo) -> HttpResponse {
-        match self.update_todo(todo) {
-            Some(t) => match serde_json::to_string(t) {
-                Ok(r) => HttpResponse::Ok().body(r),
-                _ => HttpResponse::InternalServerError().finish(),
-            },
-            _ => HttpResponse::BadRequest().finish(),
+    fn handle_update(&mut self, todo: InsertTodo, id: u64) -> TodoMessageResult {
+        match self.update_todo(todo, id) {
+            Some(t) => serde_json::to_string(t).or_else(|_| Err(APIError::InternalServerError)),
+            _ => Err(APIError::BadRequest),
         }
     }
+}
+
+pub enum APIError {
+    NotFound,
+    BadRequest,
+    InternalServerError,
 }
 
 pub enum TodoMessage {
@@ -149,23 +142,41 @@ pub enum TodoMessage {
     Delete(u64),
     ReadAll,
     Read(u64),
-    Update(Todo),
+    Update(InsertTodo, u64),
+}
+
+type TodoMessageResult = Result<String, APIError>;
+pub trait TodoMessageResultSolver {
+    fn resolve(self) -> HttpResponse;
+}
+
+impl TodoMessageResultSolver for TodoMessageResult {
+    fn resolve(self) -> HttpResponse {
+        match self {
+            Ok(s) => HttpResponse::Ok().body(s),
+            Err(e) => match e {
+                APIError::BadRequest => HttpResponse::BadRequest().finish(),
+                APIError::NotFound => HttpResponse::NotFound().finish(),
+                APIError::InternalServerError => HttpResponse::InternalServerError().finish(),
+            },
+        }
+    }
 }
 
 impl Message for TodoMessage {
-    type Result = Result<HttpResponse, ()>;
+    type Result = TodoMessageResult;
 }
 
 impl Handler<TodoMessage> for TodoStore {
-    type Result = Result<HttpResponse, ()>;
+    type Result = TodoMessageResult;
 
     fn handle(&mut self, msg: TodoMessage, _ctx: &mut Self::Context) -> Self::Result {
         match msg {
-            TodoMessage::ReadAll => Ok(self.handle_read_all()),
-            TodoMessage::Read(id) => Ok(self.handle_read(id)),
-            TodoMessage::Add(todo) => Ok(self.handle_add(todo)),
-            TodoMessage::Delete(id) => Ok(self.handle_delete(id)),
-            TodoMessage::Update(todo) => Ok(self.handle_update(todo)),
+            TodoMessage::ReadAll => self.handle_read_all(),
+            TodoMessage::Read(id) => self.handle_read(id),
+            TodoMessage::Add(todo) => self.handle_add(todo),
+            TodoMessage::Delete(id) => self.handle_delete(id),
+            TodoMessage::Update(todo, id) => self.handle_update(todo, id),
         }
     }
 }
